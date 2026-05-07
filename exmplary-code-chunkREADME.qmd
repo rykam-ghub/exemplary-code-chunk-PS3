@@ -1,0 +1,136 @@
+---
+title: "Exemplary Code Chunk"
+author: "R.Kam"
+format: pdf
+editor: visual
+---
+```{r packages}
+#| warning: false 
+#| message: false
+
+library(tidyverse)
+library(knitr)
+library(purrr)
+library(rvest)
+library(palmerpenguins) # To help with better graph visualization
+```
+
+# `leg_summary()` — A Reusable Group-Summary Utility in R
+
+A small code-craft exhibit demonstrating a custom tidyverse function (`leg_summary()`) that produces clean grouped summary statistics — counts, means, medians, ranges, totals — for any numeric variable in any tidy dataset. Built in R + Quarto, output as a PDF.
+
+## What this repo is — and isn't
+
+This repo is a **standalone code exhibit**, not a full data project. Its purpose is narrow: showcase one reusable function and demonstrate that it generalizes across datasets via a built-in R example (`palmerpenguins`). The function itself was originally written for a separate web-scraping / Senate legislation project; this exhibit lifts it out of that context to display the code-craft on its own.
+
+If you came here looking for the Senate scraping pipeline, that work lives in a different repository.
+
+## From ideation to execution
+
+### Where this started
+
+The project began as a class assignment with a deceptively simple prompt: *write a custom function in R*. I could have written something trivial — a one-line wrapper around `mean()`, say — but I wanted to write something I'd actually reuse. At the time I was already deep in a separate project scraping U.S. Senate legislative records, and I noticed I was repeatedly typing the same `group_by() %>% summarize()` chain to produce counts, means, medians, ranges, and totals broken out by party or by chamber. Every analysis. Same five statistics. Different grouping variable.
+
+That repetition was the friction point the function was designed to remove.
+
+### Design decisions, and why
+
+A few choices that shaped the final shape of `leg_summary()`:
+
+- **Three positional arguments — `data`, `grouping`, `var` — in that order.** The data-first signature mirrors tidyverse convention so the function pipes naturally. Grouping comes before the summary variable because that's how a human describes the operation aloud: *"summarize this data by party, looking at bills sponsored."*
+- **Tidy evaluation via `{{ }}` (curly-curly).** I wanted callers to pass bare column names (`Party`, `body_mass_g`) the way they'd write them inside `dplyr`, not strings (`"Party"`). Curly-curly is the modern tidyverse approach for this; getting it right took some reading on quasi-quotation but it's now an idiom I reach for whenever I write a function that takes column references.
+- **The function returns a `kable()` table, not a tibble.** This is opinionated: the caller can't pipe the output further into more `dplyr` operations. But the function exists to produce *human-readable summaries for documents*, not intermediate data, so trading flexibility for slot-and-go formatting was the right call for the use case.
+- **Up-front NA filtering on the summary variable.** Rather than dropping `na.rm = TRUE` into every aggregation call, I filter once at the top. Cleaner code, single defined behavior, no risk of one statistic silently behaving differently from another.
+
+### The three things that were genuinely hard
+
+**1. Auto-generating the `kable()` caption from the grouping variable's name.**
+
+I wanted each output table to label itself — `"Summary by Party"`, `"Summary by species"` — without forcing the caller to pass the label in as a separate string argument. Sounds simple. It is not simple. By the time `grouping` arrives inside the function body, it's already been captured as a quosure for tidy evaluation; you can't just paste it into a string. The fix is `deparse(substitute(grouping))`, which extracts the unquoted name as it appeared at the call site. This was the single most stubborn debugging session of the project — the kind of thing that's two lines once you see it and a wall before you do.
+
+**2. Making the function generalize to a totally unrelated dataset.**
+
+A function that "works" on the data you wrote it for isn't proven to be reusable — it's just specific. I picked `palmerpenguins` deliberately for the demonstration: different domain (biology vs politics), different variable types, no overlap in column names with anything legislative. If `leg_summary(penguins, species, body_mass_g)` produced output of the same shape and quality as it did on Senate data, the abstraction was real. It did. That's why the penguins demo is in this exhibit.
+
+**3. Debugging the original Senate data integration.**
+
+The parent project required scraping data with `rvest`, handling sites with anti-scraping protocols, and reshaping the raw HTML into a clean dataframe before the function could touch it. A lot of the function's design — particularly the NA handling and the reliance on tidy column references — got iterated based on real failures hitting it with messy real-world data. That upstream work isn't in this exhibit (it lives in the parent repo), but its fingerprints are all over the function's defensive choices.
+
+### What I'd do differently next time
+
+- **Optional tibble-return mode.** A `format = c("kable", "tibble")` argument would let the function serve both rendering and pipeline use cases.
+- **Survey weights.** A `weight` argument would generalize this to weighted survey data, which would have made my Arab Barometer analysis tidier.
+- **Input validation.** Right now if `var` isn't numeric, the function fails on the call to `mean()` rather than telling the caller their input is wrong. A two-line `stopifnot()` at the top would make failures legible.
+
+## The function
+
+```{r function}
+leg_summary <- function(data, grouping, var) {
+  data |>
+    filter(!is.na({{ var }})) |>
+    group_by({{ grouping }}) |>
+    summarize(
+      N = n(),
+      Mean = mean({{ var }}),
+      Median = median({{ var }}),
+      Min = min({{ var }}),
+      Max = max({{ var }}),
+      Total = sum({{ var }})
+    ) |>
+    kable(
+      digits = 2,
+      caption = paste("Summary by", deparse(substitute(grouping)))
+    )
+}
+```
+
+## Demonstration
+
+The exhibit calls `leg_summary()` on the `palmerpenguins::penguins` dataset, grouped by species and summarizing body mass (grams). A boxplot follows the table to make the distribution visible alongside the summary statistics — proving the function works on data that has nothing to do with the original use case.
+
+## Additional proof that the code is replicable in our contexts
+
+Using in-built datasets within R, we are able to replicate the code and ensure that it is able to produce the same result that we observe for the Senate data
+
+```{r penguin replicate}
+#| warning: false
+#| message: false
+# Demonstrate using the penguins data within R
+leg_summary(penguins, species, body_mass_g)
+```
+
+## Visualizing the penguin data using a graph
+
+```{r penguin-graph}
+#| warning: false 
+#| message: false
+#| fig.width: 8 
+#| fig.height: 5
+penguins |>
+  drop_na(species, body_mass_g) |>
+  ggplot(aes(x = species, y = body_mass_g, fill = species)) +
+  geom_boxplot(color = "black", alpha = 0.6) +
+  scale_fill_manual(values = c("Adelie" = "darkorange", 
+                               "Chinstrap" = "purple1", 
+                               "Gentoo" = "dodgerblue3")) +
+  labs(
+    title = "Penguin Body Mass Distribution by Species",
+    subtitle = "A visual demonstration of the native palmerpenguins dataset",
+    x = "Penguin Species",
+    y = "Body Mass (grams)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none") # Hides the redundant legend
+```
+
+# Conclusion
+
+The customized function provides a useful tool for summarizing grouped data and can be replicated for similar situations across domains — the demonstration on `palmerpenguins` shows it generalizes beyond its original legislative use case to any tidy dataset with a categorical grouping and a numeric summary variable.
+
+## Acknowledgments
+
+A Gemini tutoring session assisted with debugging the tidy-evaluation syntax in the function — particularly the `deparse(substitute())` pattern for extracting the grouping variable's name at call time. Session transcript: [linked here](https://gemini.google.com/share/a24a1ecf52cc). All design decisions, the demonstration choice, and the framing of this exhibit are the author's own.
+
+## Author
+
+R. Kam · American University, School of International Service
